@@ -44,7 +44,7 @@ static inline void*
 my_malloc(size_t size)
 {
     void* ptr = malloc(size);
-    if (!ptr)
+    if (size > 0 && !ptr)
         panic(OUT_OF_MEM_MSG);
     return ptr;
 }
@@ -53,7 +53,7 @@ static inline void*
 my_calloc(size_t nmemb, size_t size)
 {
     void* ptr = calloc(nmemb, size);
-    if (!ptr)
+    if (nmemb > 0 && size > 0 && !ptr)
         panic(OUT_OF_MEM_MSG);
     return ptr;
 }
@@ -62,7 +62,7 @@ static inline void*
 my_realloc(void* ptr, size_t size)
 {
     ptr = realloc(ptr, size);
-    if (!ptr)
+    if (size > 0 && !ptr)
         panic(OUT_OF_MEM_MSG);
     return ptr;
 }

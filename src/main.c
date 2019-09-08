@@ -38,7 +38,7 @@ int main()
     cothread_destroy(thd);
 
     thd = cothread_create(me, sender, 0);
-    cothread_send(me, thd, codata_wrap(1000), NULL);
+    cothread_send(me, thd, codata_wrap(100), NULL);
     cothread_destroy(thd);
 
     cogroup_destroy(me);

@@ -22,6 +22,8 @@
 #define FREQ_UPDATE_PERIOD 100
 #define MIN_FREQ_THRESHOLD 20
 
+#define MAGIC 0xdeadbeefdeadface
+
 typedef enum {
     FALSE = 0,
     TRUE = 1,
@@ -32,6 +34,7 @@ typedef struct costack_s costack_t;
 
 // the constant member will not change after 'cothread_create' return
 struct cothread_s {
+    uint64_t magic;
 
     cogroup_t* grp; // constant
     costack_t* stk; // constant
@@ -55,6 +58,7 @@ struct cothread_s {
 
 // the constant member will not change after 'cogroup_add_stk' return
 struct costack_s {
+    uint64_t magic;
 
     cogroup_t* grp; // constant
 
@@ -80,6 +84,7 @@ struct costack_s {
 
 // the constant member will not change after 'cogroup_create' return
 struct cogroup_s {
+    uint64_t magic;
 
     struct {
         costack_t* link;
@@ -163,7 +168,7 @@ cothread_switch_thd(cothread_t* me, cothread_t* her)
 inline static void
 cogroup_switch_thds(cogroup_t* me, cothread_t* from, cothread_t* to)
 {
-    void* ctrl_sp = aux_init_stack(me->ctrl.mem + me->ctrl.cap, &aux_ctrl_switch);
+    void* ctrl_sp = aux_init_stack(me->ctrl.mem + me->ctrl.cap, aux_ctrl_switch);
     asm_context_switch(to, &from->stk_sp, ctrl_sp);
 }
 
@@ -317,8 +322,11 @@ inline static costack_t*
 make_costack(int cap)
 {
     costack_t* stk = my_calloc(1, sizeof(costack_t));
-    stk->pub_stk.mem = my_malloc(cap);
+    stk->magic = MAGIC;
+
     stk->pub_stk.cap = cap;
+    stk->pub_stk.mem = my_malloc(cap);
+
     return stk;
 }
 
@@ -338,9 +346,12 @@ inline static cothread_t*
 make_cothread(int is_lw)
 {
     cothread_t* thd = my_calloc(1, sizeof(cothread_t));
+    thd->magic = MAGIC;
+
     int cap = is_lw ? LWT_STK_CAP : INIT_STK_CAP;
-    thd->pvt_stk.mem = my_malloc(cap);
     thd->pvt_stk.cap = cap;
+    thd->pvt_stk.mem = my_malloc(cap);
+
     return thd;
 }
 
@@ -362,9 +373,10 @@ inline static cogroup_t*
 make_cogroup(int cap, int num)
 {
     cogroup_t* grp = my_calloc(1, sizeof(cogroup_t));
+    grp->magic = MAGIC;
 
-    grp->ctrl.mem = my_malloc(CTL_STK_CAP);
     grp->ctrl.cap = CTL_STK_CAP;
+    grp->ctrl.mem = my_malloc(CTL_STK_CAP);
 
     grp->stks.cap = cap;
     while (num--)
@@ -379,12 +391,17 @@ make_cogroup(int cap, int num)
 inline static void
 free_cogroup(cogroup_t* me)
 {
-    for (cothread_t* thd = me->thds.link; thd; thd = thd->grp_link)
-        free_cothread(thd);
-    for (costack_t* stk = me->stks.link; stk; stk = stk->grp_link)
-        free_costack(stk);
-    if (me->ctrl.mem)
-        free(me->ctrl.mem);
+    for (cothread_t* thd = me->thds.link; thd;) {
+        cothread_t* tmp = thd;
+        thd = thd->grp_link;
+        free_cothread(tmp);
+    }
+    for (costack_t* stk = me->stks.link; stk;) {
+        costack_t* tmp = stk;
+        stk = stk->grp_link;
+        free_costack(tmp);
+    }
+    free(me->ctrl.mem);
     memset(me, 0, sizeof(cogroup_t));
     free(me);
 }
@@ -514,9 +531,17 @@ __asm__(
 // API
 // ---------------------------
 
-#define MUST_CURRENT(_me)               \
-    if ((_me)->state != COTHRD_RUNNING) \
-        panic("must be current cothread\n");
+#define MUST_CURRENT(_me)                            \
+    do {                                             \
+        if ((_me)->state != COTHRD_RUNNING)          \
+            panic(#_me " isn't current cothread\n"); \
+    } while (0)
+
+#define MUST_VALID(_x)                       \
+    do {                                     \
+        if ((_x)->magic != MAGIC)            \
+            panic("the " #_x " is freed\n"); \
+    } while (0)
 
 cothread_t*
 cogroup_create(int num, int cap)
@@ -528,13 +553,16 @@ cogroup_create(int num, int cap)
 
     grp->main.grp = grp;
     grp->main.state = COTHRD_RUNNING;
+    grp->main.magic = MAGIC;
 
     return &grp->main;
 }
 
 void cogroup_destroy(cothread_t* thd)
 {
+    MUST_VALID(thd);
     MUST_CURRENT(thd);
+
     if (thd != &thd->grp->main)
         panic("only main cothread can destroy the group\n");
 
@@ -544,11 +572,13 @@ void cogroup_destroy(cothread_t* thd)
 cothread_t*
 cothread_create(cothread_t* me, cofunction_t* entry, int is_light_weight)
 {
+    MUST_VALID(me);
     MUST_CURRENT(me);
+
     cogroup_t* grp = me->grp;
     cothread_t* thd = make_cothread(is_light_weight);
     cogroup_add_thd(grp, thd, is_light_weight);
-    aux_init_stack(thd->pvt_stk.mem + thd->pvt_stk.cap, &cothread_start_exec);
+    aux_init_stack(thd->pvt_stk.mem + thd->pvt_stk.cap, cothread_start_exec);
     thd->state = COTHRD_INIT;
     thd->entry = entry;
     return thd;
@@ -556,6 +586,8 @@ cothread_create(cothread_t* me, cofunction_t* entry, int is_light_weight)
 
 void cothread_destroy(cothread_t* thd)
 {
+    MUST_VALID(thd);
+
     if (thd->state == COTHRD_RUNNING)
         panic("destroy a running cothread\n");
     cogroup_remove_thd(thd->grp, thd);
@@ -564,7 +596,10 @@ void cothread_destroy(cothread_t* thd)
 
 int cothread_send(cothread_t* me, cothread_t* her, codata_t msg, codata_t* reply)
 {
+    MUST_VALID(me);
+    MUST_VALID(her);
     MUST_CURRENT(me);
+
     if (her->state == COTHRD_EXITED)
         return -1;
     if (her->grp != me->grp)
@@ -589,11 +624,14 @@ int cothread_send(cothread_t* me, cothread_t* her, codata_t msg, codata_t* reply
 codata_t
 cothread_reply(cothread_t* me, codata_t msg)
 {
+    MUST_VALID(me);
     MUST_CURRENT(me);
+
     if (me->sender == NULL)
         panic("there's no sender\n");
 
     cothread_t* her = me->sender;
+    MUST_VALID(her);
 
     her->msg = msg;
     me->state = COTHRD_REPLYING;
@@ -604,7 +642,9 @@ cothread_reply(cothread_t* me, codata_t msg)
 
 void cothread_exit(cothread_t* me)
 {
+    MUST_VALID(me);
     MUST_CURRENT(me);
+
     if (me->sender == NULL)
         panic("there's no sender\n");
 
