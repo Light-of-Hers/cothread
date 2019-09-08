@@ -9,7 +9,7 @@ typedef enum {
     COTHRD_INIT,
     COTHRD_RUNNING,
     COTHRD_SENDING,
-    COTHRD_YIELDING,
+    COTHRD_REPLYING,
     COTHRD_EXITED,
 } costate_t;
 typedef void cofunction_t(cothread_t* me, codata_t arg);
@@ -20,11 +20,11 @@ typedef void cofunction_t(cothread_t* me, codata_t arg);
 cothread_t* cogroup_create(int stack_num, int per_stack_cap);
 void cogroup_destroy(cothread_t* main_thd);
 
-cothread_t* cothread_create(cothread_t* thd, cofunction_t* entry, int is_light_weight);
+cothread_t* cothread_create(cothread_t* me, cofunction_t* entry, int is_light_weight);
 void cothread_destroy(cothread_t* thd);
 
 int cothread_send(cothread_t* me, cothread_t* her, codata_t msg, codata_t* reply);
-codata_t cothread_yield(cothread_t* me, codata_t msg);
+codata_t cothread_reply(cothread_t* me, codata_t msg);
 void cothread_exit(cothread_t* me);
 
 costate_t cothread_state(cothread_t* me);

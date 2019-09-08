@@ -103,66 +103,40 @@ struct cogroup_s {
 
     int time;
 };
-// DONE
+
 static void asm_context_switch(cothread_t* me, void** from, void* to);
 
-// DONE
 inline static void* aux_init_stack(void* stk_bot, void* ret_addr);
-// DONE
 static void aux_ctrl_switch(cothread_t* to);
 
-// DONE
 inline static costack_t* make_costack(int cap);
-// DONE
 inline static void free_costack(costack_t* me);
 
-// DONE
 inline static cothread_t* make_cothread(int is_lw);
-// DONE
 inline static void free_cothread(cothread_t* me);
 
-// DONE
 inline static cogroup_t* make_cogroup(int cap, int num);
-// DONE
 inline static void free_cogroup(cogroup_t* me);
 
-// DONE
 inline static void costack_add_thd(costack_t* me, cothread_t* thd);
-// DONE
 inline static void costack_remove_thd(costack_t* me, cothread_t* thd);
-// DONE
 inline static void costack_place_thd(costack_t* me, cothread_t* thd);
-// DONE
 inline static void* costack_bottom(costack_t* me);
-// DONE
 inline static int costack_freq(costack_t* me);
 
-// DONE
 inline static void cothread_backup_stk(cothread_t* me);
-// DONE
 inline static void cothread_restore_stk(cothread_t* me);
-// DONE
 inline static void cothread_switch_thd(cothread_t* me, cothread_t* her);
-// DONE
 inline static int cothread_in_stk(cothread_t* me);
-// DONE
 inline static int cothread_is_lwt(cothread_t* me);
-// DONE
 static void cothread_start_exec(cothread_t* me);
-// DONE
 inline static void cothread_be_active(cothread_t* me);
 
-// DONE
 inline static costack_t* cogroup_find_stk(cogroup_t* me);
-// DONE
 inline static void cogroup_add_thd(cogroup_t* me, cothread_t* thd, int is_lwt);
-// DONE
 inline static void cogroup_remove_thd(cogroup_t* me, cothread_t* thd);
-// DONE
 inline static void cogroup_add_stk(cogroup_t* me, costack_t* stk);
-// DONE
 inline static void cogroup_switch_thds(cogroup_t* me, cothread_t* from, cothread_t* to);
-// DONE
 inline static void cogroup_incr_time(cogroup_t* me);
 
 // --------------------
@@ -391,11 +365,11 @@ make_cogroup(int cap, int num)
 
     grp->ctrl.mem = my_malloc(CTL_STK_CAP);
     grp->ctrl.cap = CTL_STK_CAP;
-    
+
     grp->stks.cap = cap;
     while (num--)
         cogroup_add_stk(grp, make_costack(cap));
-        
+
     return grp;
 }
 
@@ -540,6 +514,10 @@ __asm__(
 // API
 // ---------------------------
 
+#define MUST_CURRENT(_me)               \
+    if ((_me)->state != COTHRD_RUNNING) \
+        panic("must be current cothread\n");
+
 cothread_t*
 cogroup_create(int num, int cap)
 {
@@ -556,6 +534,7 @@ cogroup_create(int num, int cap)
 
 void cogroup_destroy(cothread_t* thd)
 {
+    MUST_CURRENT(thd);
     if (thd != &thd->grp->main)
         panic("only main cothread can destroy the group\n");
 
@@ -563,10 +542,11 @@ void cogroup_destroy(cothread_t* thd)
 }
 
 cothread_t*
-cothread_create(cothread_t* thd, cofunction_t* entry, int is_light_weight)
+cothread_create(cothread_t* me, cofunction_t* entry, int is_light_weight)
 {
-    cogroup_t* grp = thd->grp;
-    thd = make_cothread(is_light_weight);
+    MUST_CURRENT(me);
+    cogroup_t* grp = me->grp;
+    cothread_t* thd = make_cothread(is_light_weight);
     cogroup_add_thd(grp, thd, is_light_weight);
     aux_init_stack(thd->pvt_stk.mem + thd->pvt_stk.cap, &cothread_start_exec);
     thd->state = COTHRD_INIT;
@@ -584,6 +564,7 @@ void cothread_destroy(cothread_t* thd)
 
 int cothread_send(cothread_t* me, cothread_t* her, codata_t msg, codata_t* reply)
 {
+    MUST_CURRENT(me);
     if (her->state == COTHRD_EXITED)
         return -1;
     if (her->grp != me->grp)
@@ -606,15 +587,16 @@ int cothread_send(cothread_t* me, cothread_t* her, codata_t msg, codata_t* reply
 }
 
 codata_t
-cothread_yield(cothread_t* me, codata_t msg)
+cothread_reply(cothread_t* me, codata_t msg)
 {
+    MUST_CURRENT(me);
     if (me->sender == NULL)
         panic("there's no sender\n");
 
     cothread_t* her = me->sender;
 
     her->msg = msg;
-    me->state = COTHRD_YIELDING;
+    me->state = COTHRD_REPLYING;
     cothread_switch_thd(me, her);
     cothread_be_active(me);
     return me->msg;
@@ -622,6 +604,7 @@ cothread_yield(cothread_t* me, codata_t msg)
 
 void cothread_exit(cothread_t* me)
 {
+    MUST_CURRENT(me);
     if (me->sender == NULL)
         panic("there's no sender\n");
 

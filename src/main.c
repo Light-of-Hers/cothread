@@ -12,7 +12,7 @@ void counter(cothread_t* me, codata_t arg)
     double f;
     for (int i = 0; i < n; ++i) {
         f = fact(i);
-        cothread_yield(me, codata_wrap(&f));
+        cothread_reply(me, codata_wrap(&f));
     }
 }
 
